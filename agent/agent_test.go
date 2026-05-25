@@ -56,8 +56,8 @@ func TestMockDB(t *testing.T) {
 		t.Fatalf("Failed to retrieve existing account ACC-7711: %v", err)
 	}
 
-	if profile.CustomerName != "Jan Kowalski" {
-		t.Errorf("Expected name 'Jan Kowalski', got '%s'", profile.CustomerName)
+	if profile.CustomerName != "John Doe" {
+		t.Errorf("Expected name 'John Doe', got '%s'", profile.CustomerName)
 	}
 
 	if profile.CardStatus != "ACTIVE" {

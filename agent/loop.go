@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"google.golang.org/genai"
 )
@@ -18,9 +18,15 @@ type TransactionAlert struct {
 }
 
 // RunAnalysis orchestrates the multi-turn agent loop for investigating a transaction alert.
+// It relies entirely on structured logging via log/slog and avoids any panic or exit behaviors.
 func (a *Agent) RunAnalysis(ctx context.Context, alert TransactionAlert) (string, error) {
-	log.Printf("[Agent Loop] Starting investigation for Account: %s, Amount: %.2f %s, Location: %s, Merchant: %s",
-		alert.AccountID, alert.Amount, alert.Currency, alert.Country, alert.MerchantType)
+	slog.Info("Starting investigation",
+		"account_id", alert.AccountID,
+		"amount", alert.Amount,
+		"currency", alert.Currency,
+		"country", alert.Country,
+		"merchant_type", alert.MerchantType,
+	)
 
 	prompt := fmt.Sprintf(
 		"NEW TRANSACTION ALERT FOR INVESTIGATION:\n"+
@@ -76,7 +82,7 @@ func (a *Agent) RunAnalysis(ctx context.Context, alert TransactionAlert) (string
 		// Log the request prompt / tool response sent to the model in the current turn
 		logRequest(turn, contents[len(contents)-1])
 
-		log.Printf("[Agent Loop] Invoking Gemini (turn %d)...", turn)
+		slog.Info("Invoking Gemini model", "turn", turn)
 		resp, err := a.Client.Models.GenerateContent(ctx, a.ModelName, contents, config)
 		if err != nil {
 			return "", fmt.Errorf("error calling Gemini model on turn %d: %w", turn, err)
@@ -108,14 +114,14 @@ func (a *Agent) RunAnalysis(ctx context.Context, alert TransactionAlert) (string
 
 		// If no tools were called, the agent has successfully concluded its investigation.
 		if len(functionCalls) == 0 {
-			log.Printf("[Agent Loop] Investigation finalized by the model.")
+			slog.Info("Investigation finalized by the model")
 			return textResponse, nil
 		}
 
 		// Execute the requested tools
 		var responseParts []*genai.Part
 		for _, fc := range functionCalls {
-			log.Printf("[Agent Loop] Executing tool '%s' (Call ID: %s)", fc.Name, fc.ID)
+			slog.Info("Executing tool", "name", fc.Name, "call_id", fc.ID)
 			var toolResult map[string]any
 
 			switch fc.Name {
@@ -158,7 +164,7 @@ func (a *Agent) RunAnalysis(ctx context.Context, alert TransactionAlert) (string
 				toolResult = map[string]any{"error": fmt.Sprintf("unknown tool call: %s", fc.Name)}
 			}
 
-			// Rygorystycznie zachowujemy identyfikator ID dla wywołania funkcji
+			// Rigorously preserve the unique ID for the function call
 			respPart := &genai.Part{
 				FunctionResponse: &genai.FunctionResponse{
 					Name:     fc.Name,
@@ -180,27 +186,37 @@ func (a *Agent) RunAnalysis(ctx context.Context, alert TransactionAlert) (string
 }
 
 func logRequest(turn int, content *genai.Content) {
-	log.Printf("[GEMINI REQUEST - Turn %d] Role: %s", turn, content.Role)
+	slog.Info("GEMINI REQUEST SENT", "turn", turn, "role", content.Role)
 	for i, part := range content.Parts {
 		if part.Text != "" {
-			log.Printf("  Part %d (Text):\n%s", i+1, part.Text)
+			slog.Info("  Request Part Details", "type", "Text", "index", i+1, "content", part.Text)
 		}
 		if part.FunctionResponse != nil {
-			log.Printf("  Part %d (Tool Response): %s [ID: %s] -> %+v",
-				i+1, part.FunctionResponse.Name, part.FunctionResponse.ID, part.FunctionResponse.Response)
+			slog.Info("  Request Part Details",
+				"type", "ToolResponse",
+				"index", i+1,
+				"name", part.FunctionResponse.Name,
+				"id", part.FunctionResponse.ID,
+				"response", fmt.Sprintf("%+v", part.FunctionResponse.Response),
+			)
 		}
 	}
 }
 
 func logResponse(turn int, content *genai.Content) {
-	log.Printf("[GEMINI RESPONSE - Turn %d] Role: %s", turn, content.Role)
+	slog.Info("GEMINI RESPONSE RECEIVED", "turn", turn, "role", content.Role)
 	for i, part := range content.Parts {
 		if part.Text != "" {
-			log.Printf("  Part %d (Text):\n%s", i+1, part.Text)
+			slog.Info("  Response Part Details", "type", "Text", "index", i+1, "content", part.Text)
 		}
 		if part.FunctionCall != nil {
-			log.Printf("  Part %d (Tool Call Request): %s [ID: %s] Args: %+v",
-				i+1, part.FunctionCall.Name, part.FunctionCall.ID, part.FunctionCall.Args)
+			slog.Info("  Response Part Details",
+				"type", "ToolCallRequest",
+				"index", i+1,
+				"name", part.FunctionCall.Name,
+				"id", part.FunctionCall.ID,
+				"args", fmt.Sprintf("%+v", part.FunctionCall.Args),
+			)
 		}
 	}
 }

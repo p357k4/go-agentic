@@ -34,7 +34,7 @@ func NewMockDB() *MockDB {
 func (db *MockDB) seed() {
 	db.customers["ACC-7711"] = &CustomerProfile{
 		AccountID:     "ACC-7711",
-		CustomerName:  "Jan Kowalski",
+		CustomerName:  "John Doe",
 		HomeCountry:   "PL",
 		TypicalAmount: 100.0,
 		CardStatus:    "ACTIVE",

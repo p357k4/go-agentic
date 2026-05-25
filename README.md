@@ -19,7 +19,7 @@ sequenceDiagram
     App->>Loop: RunAnalysis(alert details)
     Loop->>Gemini: Init prompt with Tools schema & System Instructions
     Gemini->>Loop: Tool Call: getCustomerProfile(account_id)
-    Loop->>DB: Fetch profile for Jan Kowalski (ACC-7711)
+    Loop->>DB: Fetch profile for John Doe (ACC-7711)
     DB-->>Loop: Profile: Poland, Typical Amount: 100 PLN, status ACTIVE
     Loop->>Gemini: FunctionResponse: Profile details (matching ID)
     Note over Gemini: Gemini evaluates risk factors:<br/>Vgeo (Peru vs PL = 1.0)<br/>Dval (7200 vs 100 = 1.0)<br/>Ibeh (casino = 1.0)<br/>Arisk = 0.4*1.0 + 0.4*1.0 + 0.2*1.0 = 1.0
