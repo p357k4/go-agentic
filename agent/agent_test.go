@@ -29,7 +29,7 @@ func TestCalculator(t *testing.T) {
 		{"Behavioral Only", 0.0, 0.0, 1.0, 0.2},
 		{"Combined High Risk", 1.0, 1.0, 0.0, 0.8},
 		{"Combined Low Risk", 0.0, 0.2, 0.0, 0.08},
-		{"Out of Bounds High", 2.0, 1.5, 1.2, 1.0}, // checks clamping
+		{"Out of Bounds High", 2.0, 1.5, 1.2, 1.0},  // checks clamping
 		{"Out of Bounds Low", -1.0, -0.5, 0.0, 0.0}, // checks clamping
 	}
 
@@ -107,11 +107,7 @@ func TestAgentToolsDeclaration(t *testing.T) {
 		t.Fatalf("Failed to initialize Agent: %v", err)
 	}
 
-	if len(a.Tools) != 1 {
-		t.Fatalf("Expected 1 tool container, got %d", len(a.Tools))
-	}
-
-	decls := a.Tools[0].FunctionDeclarations
+	decls := a.ToolDeclarations()
 	if len(decls) != 2 {
 		t.Fatalf("Expected 2 function declarations, got %d", len(decls))
 	}

@@ -1,131 +1,84 @@
+// Package agent implements the Gemini-powered fraud detection agent.
+//
+// Architecture:
+//   - agent.go:   Agent struct, client init, tool registry
+//   - tools.go:   Tool schema declarations and handler implementations
+//   - prompt.go:  System instruction and prompt templates
+//   - loop.go:    Multi-turn orchestration loop
+//   - logging.go: Structured request/response audit logging
 package agent
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 
 	"fraud-agent/db"
 	"fraud-agent/risk"
+
 	"google.golang.org/genai"
 )
 
-// ToolHandler defines the execution signature for a model tool.
+// ToolHandler is a callback that executes a tool and returns a JSON-serializable result.
 type ToolHandler func(ctx context.Context, args map[string]any) (map[string]any, error)
 
-// Agent wraps the GenAI client, mock DB, risk calculator, schemas, and execution handlers.
-type Agent struct {
-	Client     *genai.Client
-	ModelName  string
-	DB         *db.MockDB
-	Calculator *risk.Calculator
-	Tools      []*genai.Tool
-	Handlers   map[string]ToolHandler
+// TransactionAlert describes an incoming transaction to be investigated.
+type TransactionAlert struct {
+	AccountID    string  `json:"account_id"`
+	Amount       float64 `json:"amount"`
+	Currency     string  `json:"currency"`
+	Country      string  `json:"country"`
+	MerchantType string  `json:"merchant_type"`
 }
 
-// NewAgent initializes the Gemini client and builds the Function Calling tools config.
-func NewAgent(database *db.MockDB, calculator *risk.Calculator) (*Agent, error) {
-	ctx := context.Background()
+// Agent orchestrates fraud investigations using Gemini function calling.
+type Agent struct {
+	client    *genai.Client
+	modelName string
+	db        db.Database
+	calc      *risk.Calculator
+	tools     []*genai.Tool
+	handlers  map[string]ToolHandler
+}
 
-	// NewClient automatically retrieves the GEMINI_API_KEY from environment variables.
-	client, err := genai.NewClient(ctx, nil)
+// NewAgent creates and returns an Agent ready for use.
+// It reads GEMINI_API_KEY and optionally GEMINI_MODEL from the environment.
+func NewAgent(database db.Database, calculator *risk.Calculator) (*Agent, error) {
+	client, err := genai.NewClient(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Allow model customization, default to "gemini-2.5-flash"
 	modelName := os.Getenv("GEMINI_MODEL")
 	if modelName == "" {
 		modelName = "gemini-2.5-flash"
 	}
 
 	a := &Agent{
-		Client:     client,
-		ModelName:  modelName,
-		DB:         database,
-		Calculator: calculator,
-		Tools:      []*genai.Tool{{}}, // Initialize empty tool container
-		Handlers:   make(map[string]ToolHandler),
+		client:    client,
+		modelName: modelName,
+		db:        database,
+		calc:      calculator,
+		handlers:  make(map[string]ToolHandler),
 	}
 
-	// Register default tools
-	a.registerDefaultTools()
+	registerDefaultTools(a)
 
 	return a, nil
 }
 
-// RegisterTool registers both the tool schema and its execution handler.
+// RegisterTool adds a tool declaration and its handler to the agent.
 func (a *Agent) RegisterTool(decl *genai.FunctionDeclaration, handler ToolHandler) {
-	if len(a.Tools) == 0 {
-		a.Tools = append(a.Tools, &genai.Tool{})
+	if len(a.tools) == 0 {
+		a.tools = append(a.tools, &genai.Tool{})
 	}
-	a.Tools[0].FunctionDeclarations = append(a.Tools[0].FunctionDeclarations, decl)
-	a.Handlers[decl.Name] = handler
+	a.tools[0].FunctionDeclarations = append(a.tools[0].FunctionDeclarations, decl)
+	a.handlers[decl.Name] = handler
 }
 
-// registerDefaultTools configures getCustomerProfile and executeCardSuspension.
-func (a *Agent) registerDefaultTools() {
-	// 1. getCustomerProfile
-	getCustomerProfileDecl := &genai.FunctionDeclaration{
-		Name:        "getCustomerProfile",
-		Description: "Retrieves a customer's profile, home country, typical transaction size, and current card status by account ID.",
-		Parameters: &genai.Schema{
-			Type: genai.TypeObject,
-			Properties: map[string]*genai.Schema{
-				"account_id": {
-					Type:        genai.TypeString,
-					Description: "The customer account identifier (e.g. ACC-7711).",
-				},
-			},
-			Required: []string{"account_id"},
-		},
+// ToolDeclarations returns the registered tool declarations for testing.
+func (a *Agent) ToolDeclarations() []*genai.FunctionDeclaration {
+	if len(a.tools) == 0 {
+		return nil
 	}
-	a.RegisterTool(getCustomerProfileDecl, func(ctx context.Context, args map[string]any) (map[string]any, error) {
-		accountID, ok := args["account_id"].(string)
-		if !ok {
-			return nil, errors.New("missing or invalid account_id parameter")
-		}
-		profile, err := a.DB.GetCustomerProfile(accountID)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"account_id":     profile.AccountID,
-			"customer_name":  profile.CustomerName,
-			"home_country":   profile.HomeCountry,
-			"typical_amount": profile.TypicalAmount,
-			"card_status":    profile.CardStatus,
-		}, nil
-	})
-
-	// 2. executeCardSuspension
-	executeCardSuspensionDecl := &genai.FunctionDeclaration{
-		Name:        "executeCardSuspension",
-		Description: "Suspends the card associated with the account ID to prevent further unauthorized usage.",
-		Parameters: &genai.Schema{
-			Type: genai.TypeObject,
-			Properties: map[string]*genai.Schema{
-				"account_id": {
-					Type:        genai.TypeString,
-					Description: "The customer account identifier for which the card should be blocked (e.g. ACC-7711).",
-				},
-			},
-			Required: []string{"account_id"},
-		},
-	}
-	a.RegisterTool(executeCardSuspensionDecl, func(ctx context.Context, args map[string]any) (map[string]any, error) {
-		accountID, ok := args["account_id"].(string)
-		if !ok {
-			return nil, errors.New("missing or invalid account_id parameter")
-		}
-		err := a.DB.SuspendCard(accountID)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"status":  "success",
-			"message": fmt.Sprintf("Card suspended successfully for account %s", accountID),
-		}, nil
-	})
+	return a.tools[0].FunctionDeclarations
 }

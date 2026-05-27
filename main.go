@@ -10,93 +10,82 @@ import (
 	"fraud-agent/risk"
 )
 
-func main() {
-	slog.Info("Autonomous Fraud Detection Agent - Gemini 2.5/3.5 Orchestrator")
+// scenario bundles an alert with a human-readable label for logging.
+type scenario struct {
+	name  string
+	alert agent.TransactionAlert
+}
 
-	// Verify GEMINI_API_KEY is available in the environment
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		slog.Warn("GEMINI_API_KEY environment variable is not set!")
-		slog.Warn("Please run: export GEMINI_API_KEY=\"your-api-key-here\"")
-		slog.Warn("Exiting application...")
+func main() {
+	slog.Info("Autonomous Fraud Detection Agent")
+
+	if os.Getenv("GEMINI_API_KEY") == "" {
+		slog.Error("GEMINI_API_KEY environment variable is required")
 		os.Exit(1)
+	}
+
+	scenarios := []scenario{
+		{
+			name: "Suspicious",
+			alert: agent.TransactionAlert{
+				AccountID:    "ACC-7711",
+				Amount:       7200.00,
+				Currency:     "PLN",
+				Country:      "Peru",
+				MerchantType: "casino",
+			},
+		},
+		{
+			name: "Safe",
+			alert: agent.TransactionAlert{
+				AccountID:    "ACC-7711",
+				Amount:       50.00,
+				Currency:     "PLN",
+				Country:      "PL",
+				MerchantType: "local shop",
+			},
+		},
 	}
 
 	ctx := context.Background()
 
-	// ------------------------------------------------------------------
-	// SCENARIO A: Suspicious transaction (Peru Casino, 7200 PLN)
-	// ------------------------------------------------------------------
-	slog.Info("RUNNING SCENARIO A (Suspicious)", "amount", 7200.00, "merchant", "casino", "location", "Peru")
-	
-	// Create fresh instances for the scenario
-	databaseA := db.NewMockDB()
-	calcA := risk.NewCalculator()
+	for _, s := range scenarios {
+		runScenario(ctx, s)
+	}
+}
 
-	agentA, err := agent.NewAgent(databaseA, calcA)
+// runScenario creates an isolated agent with its own database and runs
+// a single investigation, logging card status before and after.
+func runScenario(ctx context.Context, s scenario) {
+	slog.Info("Running scenario", "name", s.name, "account_id", s.alert.AccountID,
+		"amount", s.alert.Amount, "country", s.alert.Country, "merchant", s.alert.MerchantType)
+
+	database := db.NewMockDB()
+	calculator := risk.NewCalculator()
+
+	a, err := agent.NewAgent(database, calculator)
 	if err != nil {
-		slog.Error("Failed to initialize Agent", "error", err)
-		os.Exit(1)
+		slog.Error("Failed to initialize agent", "scenario", s.name, "error", err)
+		return
 	}
 
-	// Show initial card status
-	profileBeforeA, _ := databaseA.GetCustomerProfile("ACC-7711")
-	slog.Info("Initial Card Status", "account_id", profileBeforeA.AccountID, "status", profileBeforeA.CardStatus)
+	logCardStatus(database, s.alert.AccountID, "before")
 
-	alertA := agent.TransactionAlert{
-		AccountID:    "ACC-7711",
-		Amount:       7200.00,
-		Currency:     "PLN",
-		Country:      "Peru",
-		MerchantType: "casino",
-	}
-
-	reportA, err := agentA.RunAnalysis(ctx, alertA)
+	report, err := a.RunAnalysis(ctx, s.alert)
 	if err != nil {
-		slog.Error("Scenario A failed during agent loop", "error", err)
+		slog.Error("Scenario failed", "scenario", s.name, "error", err)
 	} else {
-		slog.Info("AGENT INVESTIGATION REPORT (SCENARIO A)", "report", reportA)
+		slog.Info("Investigation report", "scenario", s.name, "report", report)
 	}
 
-	// Show final card status
-	profileAfterA, _ := databaseA.GetCustomerProfile("ACC-7711")
-	slog.Info("Final Card Status", "account_id", profileAfterA.AccountID, "status", profileAfterA.CardStatus)
+	logCardStatus(database, s.alert.AccountID, "after")
+}
 
-	// ------------------------------------------------------------------
-	// SCENARIO B: Safe transaction (Poland Local Shop, 50 PLN)
-	// ------------------------------------------------------------------
-	slog.Info("RUNNING SCENARIO B (Safe)", "amount", 50.00, "merchant", "local shop", "location", "PL")
-
-	// Create fresh instances to isolate databases
-	databaseB := db.NewMockDB()
-	calcB := risk.NewCalculator()
-
-	agentB, err := agent.NewAgent(databaseB, calcB)
+func logCardStatus(database db.Database, accountID, phase string) {
+	profile, err := database.GetCustomerProfile(accountID)
 	if err != nil {
-		slog.Error("Failed to initialize Agent", "error", err)
-		os.Exit(1)
+		slog.Warn("Could not read card status", "account_id", accountID, "phase", phase, "error", err)
+		return
 	}
-
-	// Show initial card status
-	profileBeforeB, _ := databaseB.GetCustomerProfile("ACC-7711")
-	slog.Info("Initial Card Status", "account_id", profileBeforeB.AccountID, "status", profileBeforeB.CardStatus)
-
-	alertB := agent.TransactionAlert{
-		AccountID:    "ACC-7711",
-		Amount:       50.00,
-		Currency:     "PLN",
-		Country:      "PL",
-		MerchantType: "local shop",
-	}
-
-	reportB, err := agentB.RunAnalysis(ctx, alertB)
-	if err != nil {
-		slog.Error("Scenario B failed during agent loop", "error", err)
-	} else {
-		slog.Info("AGENT INVESTIGATION REPORT (SCENARIO B)", "report", reportB)
-	}
-
-	// Show final card status
-	profileAfterB, _ := databaseB.GetCustomerProfile("ACC-7711")
-	slog.Info("Final Card Status", "account_id", profileAfterB.AccountID, "status", profileAfterB.CardStatus)
+	slog.Info("Card status", "account_id", accountID, "phase", phase, "status", profile.CardStatus)
 }

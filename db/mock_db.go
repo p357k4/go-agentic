@@ -15,6 +15,12 @@ type CustomerProfile struct {
 	CardStatus    string  `json:"card_status"` // "ACTIVE", "SUSPENDED"
 }
 
+// Database defines the read/write operations used by the fraud agent.
+type Database interface {
+	GetCustomerProfile(accountID string) (*CustomerProfile, error)
+	SuspendCard(accountID string) error
+}
+
 // MockDB is a thread-safe simulation of a customer database.
 type MockDB struct {
 	mu        sync.RWMutex
